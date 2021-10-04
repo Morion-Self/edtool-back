@@ -15,6 +15,7 @@ class Users
     function __construct()
     {
         $this->session = new Session();
+        $this->userID = $this->session->getUserID();
     }
 
 
@@ -41,8 +42,8 @@ class Users
             // Создаем хеш из пароля
             $hash = self::getPasswordHash($password);
 
-            // TODO: premium_until нужно обновлять при первом входе, а не создании
-            // а первый вход будет только после валидации емейла
+            // TODO: По идее, надо убрать заполнение поля premium_until.
+            // Но сейчас я просто хочу по-быстрому выпилить оплату (чтобы сервис был бесплатный), а когда будет больше времени можно будет проверить и это
             $s = $GLOBALS['db']->prepare(
                 'insert INTO users (email, password, reg_date, premium_until) VALUES(?, ?, now(), adddate(CURRENT_TIMESTAMP, INTERVAL 14 DAY))'
             );
@@ -80,7 +81,8 @@ class Users
     }
 
     /**
-     * Возвращает, 
+     * Возвращает, валидирован ли пользователь.
+     * Если нет — то возвращает результат, просрочен ли токен или нет
      */
     public function isUserValidated($email)
     {
@@ -109,7 +111,6 @@ class Users
     public function changePassword($oldPassword, $newPassword)
     {
         // если че-то не так - бросится исключение
-        // в теории, бу га га
         self::isPasswordCorrect($newPassword);
 
         $sql = 'select password
@@ -122,27 +123,26 @@ class Users
             $s->bind_result($oldHash);
             $s->fetch();
             if (password_verify($oldPassword, $oldHash)) {
+                $s->close(); // иначе update не отработает
                 $newHash = self::getPasswordHash($newPassword);
                 $sql = 'update users
                         set password = ?
-                        where id = ?';
+                        where id = ?';                
                 $s = $GLOBALS['db']->prepare($sql);
                 $s->bind_param('si', $newHash, $this->userID);
                 $s->execute();
             } else {
-                throw new OldPasswordIncorrectException('Неверно указан старый пароль');   //fixme: удалить текст после переделки fronend            
-            }
-    
+                throw new Exception('OLD_PASSWORD_INCORRECT');
+            }    
         } else {
             return false;
         }
-
         return true;
     }
 
     /**
      * Авторизация логину и паролю.
-     * если успех - ставятся глобальные переменные в сесии session userid / session email.
+     * если успех - ставятся глобальная переменная в сессии userid 
      *
      * @param string $email
      * @param string $password - в открытом виде (исходный, что ввел пользователь)
@@ -165,7 +165,6 @@ class Users
 
         if (password_verify($password, $hash)) {
             $userID = $row['id'];
-            // $this->session->setUserEmail($email);
             $this->session->setUserID($userID);
 
             $sql = 'update users
@@ -206,7 +205,7 @@ class Users
     /**
      * Отправляет письмо для подтверждения емейла
      */
-    private function requestValidateEmail($email)
+    public function requestValidateEmail($email)
     {
         $s = null;
 
@@ -227,17 +226,15 @@ class Users
                 $s->close(); // иначе insert не отработает
                 $i = $GLOBALS['db']->prepare(
                     'INSERT INTO validate_email (user_id, token, active_to)
-                    VALUES (?, ?, addtime(CURRENT_TIMESTAMP, "0:15:0"))'
+                    VALUES (?, ?, addtime(CURRENT_TIMESTAMP, "2:0:0"))'
                 );
                 $i->bind_param('is', $userID, $token);
                 if ($i->execute()) {
-                    $subject = "=?utf-8?B?" . base64_encode("Подтверждение e-mail на сайте edTool.ru") . "?=";
-                    $msg = "Вы зарегистрировались на сайте https://edtool.ru<br><br>
-                    Для продолжения регистрации перейдите по <a href=\"https://edtool.ru/backend/services/validate_email.php?token=" . $token . "\">этой ссылке</a>.<br>
-                    Если это делали не вы, то можете проигнорировать это письмо.<br><br>
-                    Ссылка для подтверждения действует 15 минут. Если за это время вы не успеете перейти по ней, то при повторном входе на сайт вы получите новую ссылку.<br><br>
-                    <em>Это письмо составлено роботом, и нет смысла на него отвечать.</em>";
-                    $headers = "From: edTool Validation <validation@edtool.ru>\r\n";
+                    $subject = "=?utf-8?B?" . base64_encode("Подтверждение email edTool") . "?=";
+                    $msg = "Вы зарегистрировались на сайте edTool.ru<br><br>
+                    Для подтверждения email-адреса перейдите <a href=\"https://edtool.ru/backend/services/validate_email.php?token=" . $token . "\">по этой ссылке</a>.<br><br>
+                    Ссылка действует 2 часа. Если за это время вы не перейдете по ней, регистрация будет отменена.";
+                    $headers = "From: edTool <validation@edtool.ru>\r\n";
                     $headers .= "Content-Type: text/html; charset=utf-8\r\n";
                     mail($email, $subject, $msg, $headers);
                 } else {
@@ -249,7 +246,7 @@ class Users
     }
 
     /**
-     * Валидирует емейл
+     * Валидирует емейл (когда пользователь переходит по ссылке)
      */
     public function validateEmail($token)
     {
@@ -262,7 +259,6 @@ class Users
                 and CURRENT_TIMESTAMP <= active_to'
         );
         $s->bind_param('s', $token);
-        // $userID = $_SESSION['ehUserID'];
 
         if ($s->execute()) {
             $s->bind_result($userID);
@@ -290,111 +286,95 @@ class Users
 
 
 
-    // /**
-    //  * Запросить изменение пароля.
-    //  * На вход принимает либо логин, либо email.
-    //  * Если такой пользователь есть в БД, то ему отправляется письмо
-    //  * При этом на выход функция всегда отдаёт OK, даже если такого пользователя нет
-    //  * Чтобы лишний раз не говорить, нашли мы такого пользователя или нет
-    //  *
-    //  */
-    // public function requestPasswordRecovery($inputEmail, $inputLogin)
-    // {
-    //     $s = null;
-    //     if (!empty($inputEmail)) {
-    //         $s = $GLOBALS['db']->prepare(
-    //             'SELECT id, email
-    //             FROM users
-    //             WHERE email = ?'
-    //         );
-    //         $s->bind_param('s', $inputEmail);
-    //     } else if (!empty($inputLogin)) {
-    //         $s = $GLOBALS['db']->prepare(
-    //             'SELECT id, email
-    //             FROM users
-    //             WHERE login = ?'
-    //         );
-    //         $s->bind_param('s', $inputLogin);
-    //     } else {
-    //         return 'ERROR';
-    //     }
+    /**
+     * Запросить изменение пароля.
+     * Если такой пользователь есть в БД, то ему отправляется письмо
+     * При этом на выход функция всегда отдаёт OK, даже если такого пользователя нет
+     * Чтобы лишний раз не говорить, нашли мы такого пользователя или нет
+     */
+    public function requestPasswordRecovery($inputEmail)
+    {
+        $s = $GLOBALS['db']->prepare(
+            'SELECT id, email
+            FROM users
+            WHERE email = ?'
+        );
+        $s->bind_param('s', $inputEmail);
 
-    //     if ($s->execute()) {
-    //         $s->bind_result($userId, $email);
-    //         if ($s->fetch()) {
-    //             $token = bin2hex(random_bytes(50));
-    //             $s->close(); // иначе insert не отработает
-    //             $i = $GLOBALS['db']->prepare(
-    //                 'INSERT INTO password_recovery (user_id, token, active_to)
-    //                 VALUES (?, ?, addtime(CURRENT_TIMESTAMP, "3:0:0"))
-    //                 ON DUPLICATE KEY UPDATE
-    //                 token = ?, active_to = addtime(CURRENT_TIMESTAMP, "3:0:0")');
-    //             $i->bind_param('iss', $userId, $token, $token);
-    //             if ($i->execute()) {
-    //                 $subject = "=?utf-8?B?".base64_encode(" Восстановление пароля")."?=";
-    //                 $msg = "Здравствуйте.<br> Кто-то (возможно Вы) запросил восстановление пароля.<br>
-    //                 Если это делали Вы, то перейдите по <a href=\"https://yelton.ru/password_recovery/#password/" . $token . "\">ссылке</a> для продолжения.<br>
-    //                 Если это делали не Вы, то можете проигнорировать это письмо.<br><br>
-    //                 Ссылка для восстановления пароля действительна в течение 3 часов.<br><br>
-    //                 <em>Данное письмо составлено роботом, и нет смысла на него отвечать.</em>";
-    //                 $headers = "From: Yelton Recovery <recovery@yelton.ru>\r\n";
-    //                 $headers .= "Content-Type: text/html; charset=utf-8\r\n";
-    //                 mail($email, $subject, $msg, $headers);
-    //             } else {
-    //                 return $GLOBALS['db']->error;
-    //             }
-    //         }
-    //     }
-    //     return 'OK';
-    // }
+        if ($s->execute()) {
+            $s->bind_result($userId, $email);
+            if ($s->fetch()) {
+                $token = bin2hex(random_bytes(18));
+                $s->close(); // иначе insert не отработает
+                $i = $GLOBALS['db']->prepare(
+                    'INSERT INTO password_recovery (user_id, token, active_to)
+                    VALUES (?, ?, addtime(CURRENT_TIMESTAMP, "2:0:0"))
+                    ON DUPLICATE KEY UPDATE
+                    token = ?, active_to = addtime(CURRENT_TIMESTAMP, "2:0:0")');
+                $i->bind_param('iss', $userId, $token, $token);
+                if ($i->execute()) {
+                    $subject = "=?utf-8?B?".base64_encode("Восстановление пароля edTool")."?=";
+                    $msg = "Чтобы восстановить пароль на сайте edTool.ru, перейдите по <a href=\"https://edtool.ru/password_recovery/#password/" . $token . "\">ссылке</a>.<br/>
+                    Ссылка действительна в течение 2 часов.<br><br>
+                    Если это делали не Вы, можете проигнорировать это письмо.";
+                    $headers = "From: edTool <validation@edtool.ru>\r\n";
+                    $headers .= "Content-Type: text/html; charset=utf-8\r\n";
+                    mail($email, $subject, $msg, $headers);
+                } else {
+                    return $GLOBALS['db']->error;
+                }
+            }
+        }
+        return 'OK';
+    }
 
-    // /**
-    //  * Установить новый пароль для пользователя, который ранее запросил сброс пароля
-    //  */
-    // public function setNewPasswordRecovery($inputToken, $inputPassword)
-    // {
-    //     $GLOBALS['db']->begin_transaction();
-    //     $s = $GLOBALS['db']->prepare(
-    //         'SELECT user_id
-    //         FROM password_recovery
-    //         WHERE token = ?
-    //         AND CURRENT_TIMESTAMP <= active_to'
-    //     );
-    //     $s->bind_param('s', $inputToken);
-    //     if ($s->execute()) {
-    //         $s->bind_result($userId);
-    //         if ($s->fetch()) {
-    //             $s->close(); // иначе insert не отработает
-    //             self::isPasswordCorrect($inputPassword);
-    //             $i = $GLOBALS['db']->prepare(
-    //                 'update users
-    //                 set password = ?
-    //                 where id = ?'
-    //             );
-    //             $hash = self::getPasswordHash($inputPassword);
-    //             $i->bind_param('si', $hash, $userId);
-    //             if (!$i->execute()) {
-    //                 return 'ERROR'; // хз что произошло
-    //             }
-    //             $i = $GLOBALS['db']->prepare(
-    //                 'DELETE from
-    //                 password_recovery
-    //                 where user_id = ?
-    //                 and token = ?'
-    //             );
-    //             $i->bind_param('is', $userId, $inputToken);
-    //             if (!$i->execute()) {
-    //                 return 'ERROR'; // хз что произошло
-    //             }
-    //         } else {
-    //             return 'NO_TOKEN'; // нет токена или он истек
-    //         }
-    //     } else {
-    //         return 'NO_TOKEN';
-    //     }
-    //     $GLOBALS['db']->commit();
-    //     return 'OK';
-    // }
+    /**
+     * Установить новый пароль для пользователя, который ранее запросил сброс пароля
+     */
+    public function setNewPasswordRecovery($inputToken, $inputPassword)
+    {
+        $GLOBALS['db']->begin_transaction();
+        $s = $GLOBALS['db']->prepare(
+            'SELECT user_id
+            FROM password_recovery
+            WHERE token = ?
+            AND CURRENT_TIMESTAMP <= active_to'
+        );
+        $s->bind_param('s', $inputToken);
+        if ($s->execute()) {
+            $s->bind_result($userId);
+            if ($s->fetch()) {
+                $s->close(); // иначе insert не отработает
+                self::isPasswordCorrect($inputPassword);
+                $i = $GLOBALS['db']->prepare(
+                    'update users
+                    set password = ?
+                    where id = ?'
+                );
+                $hash = self::getPasswordHash($inputPassword);
+                $i->bind_param('si', $hash, $userId);
+                if (!$i->execute()) {
+                    return 'ERROR'; // хз что произошло
+                }
+                $i = $GLOBALS['db']->prepare(
+                    'DELETE from
+                    password_recovery
+                    where user_id = ?
+                    and token = ?'
+                );
+                $i->bind_param('is', $userId, $inputToken);
+                if (!$i->execute()) {
+                    return 'ERROR'; // хз что произошло
+                }
+            } else {
+                return 'NO_TOKEN'; // нет токена или он истек
+            }
+        } else {
+            return 'NO_TOKEN';
+        }
+        $GLOBALS['db']->commit();
+        return 'OK';
+    }
 
     /**
      * Возвращает хэш для пароля
@@ -418,7 +398,7 @@ class Users
     {
         $MIN_SYMBOLS = 5;
         if (iconv_strlen($password) < $MIN_SYMBOLS) {
-            throw new Exception("weak_password");
+            throw new Exception("WEAK_PASSWORD");
         }
 
         // if (!preg_match('/^[0-9A-Za-z_-]+$/u', $password)) {
@@ -474,63 +454,5 @@ class Users
     //     }
 
     //     return $usr;
-    // }
-
-    /**
-     * Возвращает дату окончания премиума (UNIX_TIMESTAMP)
-     *
-     * @return $User | false
-     */
-    // public function getPremiumUntil()
-    // {
-    //     // $userID = $_SESSION['ehUserID'];
-    //     // обход проблемы 2038
-    //     $s = $GLOBALS['db']->prepare(
-    //         'select TO_SECONDS(max(date_to))-62167219200+TO_SECONDS(UTC_TIMESTAMP())-TO_SECONDS(NOW())
-    //         from premium
-    //         where user_id = ?'
-    //     );
-    //     $s->bind_param('i', $this->session->getUserID());
-
-    //     $out = 1;
-    //     if ($s->execute()) {
-    //         $s->bind_result($until);
-    //         $s->fetch();
-    //         $out = $until;
-    //     }
-
-    //     return $out;
-    // }
-
-
-    // /**
-    //  * Активен ли премиум период
-    //  * @return boolean [description]
-    //  */
-    // public function isPremiumActive()
-    // {
-    //     $s = $GLOBALS['db']->prepare(
-    //         'select now() <= premium_until
-    //         from users
-    //         where id = ?'
-    //     );
-    //     $s->bind_param('i', $this->session->getUserID());
-
-    //     $out = 0;
-    //     if ($s->execute()) {
-    //         $s->bind_result($until);
-    //         $s->fetch();
-    //         $out = $until;
-    //     }
-
-    //     return $out;
-    // }
-}
-
-/**
- * Выбрасывается при смене пароля.
- * Старый пароль указан неверно
- */
-class OldPasswordIncorrectException extends Exception
-{
+    // } 
 }

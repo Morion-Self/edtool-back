@@ -24,16 +24,13 @@ class Utm
         try {
             switch ($shorter) {
                 case 'clck.ru':
-                    $out = file_get_contents("https://clck.ru/--?url=" . $url);
-                    // $out = "https://clck.ru/--?url=" . urlencode($url);  // dbg
+                    $out = file_get_contents("https://clck.ru/--?url=" . urlencode($url)); // тут нужно urlencode
                     break;
                 case 'is.gd':
-                    $out = file_get_contents("https://is.gd/create.php?format=simple&url=" . $url);
-                    // $out = "https://is.gd/create.php?format=simple&url=" . urlencode($url); // dbg
+                    $out = file_get_contents("https://is.gd/create.php?format=simple&url=" . urlencode($url)); // тут тоже
                     break;
                 case 'tinyurl.com':
-                    $out = file_get_contents("https://tinyurl.com/api-create.php?url=" . $url);
-                    // $out = "https://tinyurl.com/api-create.php?url=" . urlencode($url); // dbg
+                    $out = file_get_contents("https://tinyurl.com/api-create.php?url=" . $url); // а тут не нужно 
                     break;
             }
             return $out;

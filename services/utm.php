@@ -1,15 +1,12 @@
 <?php
 
+// Проверка авторизации
 include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/Session.php';
 $session = new Session();
-// Сервис работает только для авторизованных пользователей
 if ($session->getUserID() === false) {
     http_response_code(401);
     return;
 }
-
-include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/Users.php';
-include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/Utm.php';
 
 $mode = isset($_POST['mode']) ? $_POST['mode'] : null;
 // short
@@ -19,6 +16,7 @@ $shorter = isset($_POST['shorter']) ? $_POST['shorter'] : null;
 $config = isset($_POST['config']) ? $_POST['config'] : null;
 $configName = isset($_POST['configName']) ? $_POST['configName'] : null;
 
+include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/Utm.php';
 $utm = new Utm();
 
 try {
