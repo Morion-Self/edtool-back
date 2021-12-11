@@ -8,14 +8,6 @@ if ($session->getUserID() === false) {
     return;
 }
 
-// Проверка оплаты
-include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/Pay.php';
-$pay = new Pay();
-if ($pay->isPremiumActive() == false) {
-    http_response_code(402);
-    return;
-}
-
 $mode = isset($_POST['mode']) ? $_POST['mode'] : null;
 // short
 $url = isset($_POST['url']) ? $_POST['url'] : null;

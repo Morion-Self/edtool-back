@@ -42,8 +42,8 @@ class Users
             // Создаем хеш из пароля
             $hash = self::getPasswordHash($password);
 
-            // TODO: premium_until нужно обновлять при первом входе, а не создании
-            // а первый вход будет только после валидации емейла
+            // TODO: По идее, надо убрать заполнение поля premium_until.
+            // Но сейчас я просто хочу по-быстрому выпилить оплату (чтобы сервис был бесплатный), а когда будет больше времени можно будет проверить и это
             $s = $GLOBALS['db']->prepare(
                 'insert INTO users (email, password, reg_date, premium_until) VALUES(?, ?, now(), adddate(CURRENT_TIMESTAMP, INTERVAL 14 DAY))'
             );

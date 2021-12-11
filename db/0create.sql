@@ -86,14 +86,14 @@ CREATE EVENT event_remove_unvalidated_users
 -- Потому что в тиньке идет сквозная нумерация для тестовых заказов (через тестовый терминал) и боевых.
 -- Это значит, что если тестовый заказ с номером 100 оплачен, то на боевом терминале нельзя будет создать заказ 100 -- апи тинька не позволит
 -- Поэтому я генерю uuid, чтобы было рандомно.
-create table orders 
-(
-    id                      char(36)            primary key,
-    user_id                 BIGINT unsigned     not null,
-    confirmed               bool                default 0,
+-- create table orders 
+-- (
+--     id                      char(36)            primary key,
+--     user_id                 BIGINT unsigned     not null,
+--     confirmed               bool                default 0,
 
-    CONSTRAINT              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
-);
+--     CONSTRAINT              FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT
+-- );
 
 
 -- восстановление пароля
