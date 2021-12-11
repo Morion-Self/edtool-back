@@ -8,6 +8,14 @@ if ($session->getUserID() === false) {
     return;
 }
 
+// и для оплаченных
+include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/Pay.php';
+$pay = new Pay();
+if ($pay->isPremiumActive() == false) {
+    http_response_code(402);
+    return;
+}
+
 include_once $_SERVER['DOCUMENT_ROOT'] . '/backend/core/GDocExtractImages.php';
 
 try {
